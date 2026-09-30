@@ -254,7 +254,15 @@
                 font-size: 32px;
             }
         }
+    
+        .panelBox{background:#101c2b;border:1px solid #203249;border-radius:14px;padding:20px;box-shadow:0 8px 30px rgba(0,0,0,.15)}
+        .panelBox h2{margin:0 0 12px}.panelBox input{width:100%;box-sizing:border-box;background:#0a1420;color:white;border:1px solid #2a3d54;border-radius:8px;padding:11px;margin:6px 0}
+        .panelBox button{background:#31d7a3;color:#07131e;border:0;border-radius:8px;padding:10px 14px;font-weight:700;cursor:pointer;margin:5px 5px 5px 0}.panelBox button:hover{opacity:.9}
+        .rowBtns{display:flex;flex-wrap:wrap}.muted{color:#8ea1b5}.message{min-height:20px;color:#8ea1b5}.chatMessages{height:300px;overflow-y:auto;background:#0a1420;border:1px solid #203249;border-radius:10px;padding:12px}.chatMsg{padding:9px 0;border-bottom:1px solid #1c2b3d}.chatMsg:last-child{border-bottom:0}.chatUser{color:#31d7a3;font-weight:700}.chatTime{color:#66788c;font-size:12px;margin-left:7px}.chatText{margin-top:3px;white-space:pre-wrap;overflow-wrap:anywhere}.chatSend{display:flex;gap:8px;margin-top:10px}.chatSend input{margin:0;flex:1}.chatTabs{margin-bottom:8px}
+        #globalLeaderboard table,#leagueLeaderboard table{width:100%;border-collapse:collapse;margin-top:12px} #globalLeaderboard th,#globalLeaderboard td,#leagueLeaderboard th,#leagueLeaderboard td{padding:9px;border-bottom:1px solid #203249;text-align:left}
+
     </style>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 </head>
 
 <body>
@@ -265,9 +273,50 @@
         <div>
             <a onclick="showHome()">Home</a>
             <a onclick="showTeam()">My Team</a>
-            <a>Leaderboard</a>
+            <a onclick="showCPL()">CPL</a>
         </div>
     </nav>
+
+    
+<section id="cplPanel" style="display:none; padding:28px 0;">
+  <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(280px,1fr));gap:20px;">
+    <div class="panelBox">
+      <h2>Account</h2>
+      <p id="authStatus" class="muted">Not logged in</p>
+      <input id="emailInput" type="email" placeholder="Email">
+      <input id="passwordInput" type="password" placeholder="Password">
+      <input id="usernameInput" type="text" placeholder="Username (for sign up)">
+      <div class="rowBtns"><button onclick="signUp()">Sign Up</button><button onclick="logIn()">Log In</button><button onclick="logOut()">Log Out</button></div>
+      <p id="authMessage" class="message"></p>
+    </div>
+    <div class="panelBox">
+      <h2>Private League</h2>
+      <input id="leagueNameInput" type="text" placeholder="League name">
+      <button onclick="createLeague()">Create League</button>
+      <input id="leagueCodeInput" type="text" placeholder="League code">
+      <button onclick="joinLeague()">Join League</button>
+      <p id="leagueMessage" class="message"></p>
+      <div id="myLeagues"></div>
+    </div>
+  </div>
+  <div class="panelBox" style="margin-top:20px;">
+    <h2>Global Leaderboard</h2>
+    <button onclick="loadGlobalLeaderboard()">Refresh</button>
+    <div id="globalLeaderboard"></div>
+  </div>
+  <div class="panelBox" style="margin-top:20px;">
+    <h2 id="leagueBoardTitle">League Leaderboard</h2>
+    <div id="leagueLeaderboard"><p class="muted">Join a league to view its leaderboard.</p></div>
+  </div>
+  <div class="panelBox" style="margin-top:20px;">
+    <h2>💬 CPL Chat</h2>
+    <div class="chatTabs"><button onclick="setChatMode('global')">Global Chat</button><button onclick="setChatMode('league')">League Chat</button></div>
+    <p id="chatModeLabel" class="muted">Global Chat</p>
+    <div id="chatMessages" class="chatMessages"></div>
+    <div class="chatSend"><input id="chatInput" maxlength="500" placeholder="Write a message..." onkeydown="if(event.key==='Enter') sendMessage()"><button onclick="sendMessage()">Send</button></div>
+    <p id="chatMessage" class="message"></p>
+  </div>
+</section>
 
     <main class="page">
 
@@ -310,6 +359,8 @@
                 </div>
 
             </div>
+
+        <button onclick="saveTeam()" style="margin:20px 0;background:#31d7a3;color:#07131e;border:0;border-radius:8px;padding:12px 18px;font-weight:700;cursor:pointer;">SAVE TEAM</button>
 
         </section>
 
@@ -1475,7 +1526,7 @@
                 card.innerHTML = `
                     <div class="player-top">
                         <div class="player-icon">${player.icon}</div>
-                        <div class="position">${player.position}</div>
+                        <div class="position">${player.role}</div>
                     </div>
 
                     <div class="player-name">${player.name}</div>
@@ -1528,7 +1579,116 @@
             }
 
             updateTeam();
-            displayPlayers();
+    
+        const SUPABASE_URL = "https://geahyrxqqurdfbuutgys.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_nphYeG6JDCp0kGPw2CDeag_BLGYNabn";
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        let currentUser = null;
+        let currentLeague = null;
+        let chatMode = "global";
+        let chatChannel = null;
+
+        function showCPL(){
+            document.getElementById("cplPanel").style.display="block";
+            window.scrollTo({top:0,behavior:"smooth"});
+            loadGlobalLeaderboard();
+            loadMyLeagues();
+            loadChat();
+        }
+        function msg(id,text){document.getElementById(id).textContent=text;}
+        async function ensureProfile(user, username){
+            const name=username || user.user_metadata?.username || user.email?.split("@")[0] || "Player";
+            await supabaseClient.from("profiles").upsert({id:user.id,username:name},{onConflict:"id"});
+        }
+        async function signUp(){
+            const email=document.getElementById("emailInput").value.trim();
+            const password=document.getElementById("passwordInput").value;
+            const username=document.getElementById("usernameInput").value.trim();
+            if(!email||!password||!username){msg("authMessage","Enter an email, password and username.");return;}
+            const {data,error}=await supabaseClient.auth.signUp({email,password,options:{data:{username}}});
+            if(error){
+                if(/rate limit|rate_limit|too many/i.test(error.message)) msg("authMessage","Supabase email limit reached. Wait for the limit to reset, then try again. If you already have an account, use Log In.");
+                else msg("authMessage",error.message);
+                return;
+            }
+            if(data.user) await ensureProfile(data.user,username);
+            msg("authMessage",data.session?"Account created and logged in.":"Account created. Check your email if confirmation is enabled in Supabase.");
+        }
+        async function logIn(){
+            const email=document.getElementById("emailInput").value.trim();
+            const password=document.getElementById("passwordInput").value;
+            const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
+            if(error){msg("authMessage",error.message);return;}
+            currentUser=data.user; await ensureProfile(currentUser); updateAuthUI(); loadMyLeagues(); loadGlobalLeaderboard(); loadChat();
+            msg("authMessage","Logged in.");
+        }
+        async function logOut(){await supabaseClient.auth.signOut();currentUser=null;currentLeague=null;updateAuthUI();msg("authMessage","Logged out.");}
+        function updateAuthUI(){document.getElementById("authStatus").textContent=currentUser?`Logged in as ${currentUser.email}`:"Not logged in";}
+
+        async function saveTeam(){
+            if(!currentUser){msg("authMessage","Log in before saving your team.");showCPL();return;}
+            const name=prompt("Team name:","My CPL Team"); if(!name)return;
+            const {data:team,error}=await supabaseClient.from("teams").upsert({user_id:currentUser.id,name,points:0},{onConflict:"user_id"}).select().single();
+            if(error){msg("authMessage",error.message);return;}
+            await supabaseClient.from("team_players").delete().eq("team_id",team.id);
+            const rows=selectedPlayers.map(i=>({team_id:team.id,player_key:String(i)}));
+            if(rows.length) await supabaseClient.from("team_players").insert(rows);
+            msg("authMessage","Team saved.");
+        }
+        async function createLeague(){
+            if(!currentUser){msg("leagueMessage","Log in first.");return;}
+            const name=document.getElementById("leagueNameInput").value.trim(); if(!name){msg("leagueMessage","Enter a league name.");return;}
+            const code=Math.random().toString(36).slice(2,8).toUpperCase();
+            const {data,error}=await supabaseClient.from("leagues").insert({name,code,is_public:false,created_by:currentUser.id}).select().single();
+            if(error){msg("leagueMessage",error.message);return;}
+            await supabaseClient.from("league_members").insert({league_id:data.id,user_id:currentUser.id});
+            document.getElementById("leagueCodeInput").value=code; msg("leagueMessage",`League created. Code: ${code}`); loadMyLeagues();
+        }
+        async function joinLeague(){
+            if(!currentUser){msg("leagueMessage","Log in first.");return;}
+            const code=document.getElementById("leagueCodeInput").value.trim().toUpperCase(); if(!code){msg("leagueMessage","Enter a league code.");return;}
+            const {error}=await supabaseClient.rpc("join_league_by_code",{p_code:code});
+            if(error){msg("leagueMessage",error.message);return;}
+            msg("leagueMessage","Joined league."); loadMyLeagues();
+        }
+        async function loadMyLeagues(){
+            const box=document.getElementById("myLeagues"); if(!currentUser){box.innerHTML="";return;}
+            const {data,error}=await supabaseClient.from("league_members").select("league_id,leagues(id,name,code)").eq("user_id",currentUser.id);
+            if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;}
+            box.innerHTML=data.length?data.map(x=>`<button onclick='selectLeague(${JSON.stringify(x.leagues.id)},${JSON.stringify(x.leagues.name)})'>${x.leagues.name} (${x.leagues.code})</button>`).join(""):"<p class='muted'>No leagues yet.</p>";
+        }
+        async function selectLeague(id,name){currentLeague={id,name};document.getElementById("leagueBoardTitle").textContent=`${name} Leaderboard`;await loadLeagueLeaderboard(id);setChatMode("league");loadChat();}
+        async function loadGlobalLeaderboard(){
+            const box=document.getElementById("globalLeaderboard"); const {data,error}=await supabaseClient.rpc("get_global_leaderboard");
+            if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;} renderBoard(box,data||[]);
+        }
+        async function loadLeagueLeaderboard(id){
+            const box=document.getElementById("leagueLeaderboard"); const {data,error}=await supabaseClient.rpc("get_league_leaderboard",{p_league_id:id});
+            if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;} renderBoard(box,data||[]);
+        }
+        function renderBoard(box,data){if(!data.length){box.innerHTML="<p class='muted'>No teams yet.</p>";return;}box.innerHTML=`<table><thead><tr><th>#</th><th>Username</th><th>Team</th><th>Points</th></tr></thead><tbody>${data.map((x,i)=>`<tr><td>${i+1}</td><td>${x.username||"-"}</td><td>${x.team_name||"-"}</td><td>${x.points??0}</td></tr>`).join("")}</tbody></table>`;}
+        function setChatMode(mode){chatMode=mode;document.getElementById("chatModeLabel").textContent=mode==="global"?"Global Chat":currentLeague?`League Chat: ${currentLeague.name}`:"League Chat — select a league first";loadChat();}
+        async function loadChat(){
+            const box=document.getElementById("chatMessages"); if(!currentUser){box.innerHTML="<p class='muted'>Log in to use chat.</p>";return;}
+            if(chatMode==="league"&&!currentLeague){box.innerHTML="<p class='muted'>Select a league first.</p>";return;}
+            let q=supabaseClient.from("messages").select("id,user_id,username,message,created_at,league_id").order("created_at",{ascending:true}).limit(100);
+            q=chatMode==="global"?q.is("league_id",null):q.eq("league_id",currentLeague.id);
+            const {data,error}=await q; if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;} renderMessages(data||[]); subscribeChat();
+        }
+        function renderMessages(data){document.getElementById("chatMessages").innerHTML=data.length?data.map(m=>`<div class="chatMsg"><span class="chatUser">${escapeHtml(m.username)}</span><span class="chatTime">${new Date(m.created_at).toLocaleString()}</span><div class="chatText">${escapeHtml(m.message)}</div></div>`).join(""):"<p class='muted'>No messages yet.</p>";const b=document.getElementById("chatMessages");b.scrollTop=b.scrollHeight;}
+        function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+        function subscribeChat(){if(chatChannel){supabaseClient.removeChannel(chatChannel);chatChannel=null;}const filter=chatMode==="global"?"league_id=is.null":`league_id=eq.${currentLeague.id}`;chatChannel=supabaseClient.channel("cpl-chat").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter},()=>loadChat()).subscribe();}
+        async function sendMessage(){
+            if(!currentUser){msg("chatMessage","Log in first.");return;}
+            if(chatMode==="league"&&!currentLeague){msg("chatMessage","Select a league first.");return;}
+            const input=document.getElementById("chatInput"); const message=input.value.trim(); if(!message)return;
+            const {error}=await supabaseClient.from("messages").insert({user_id:currentUser.id,league_id:chatMode==="global"?null:currentLeague.id,message});
+            if(error){msg("chatMessage",error.message);return;} input.value=""; msg("chatMessage",""); loadChat();
+        }
+        supabaseClient.auth.getSession().then(async ({data})=>{currentUser=data.session?.user||null;if(currentUser)await ensureProfile(currentUser);updateAuthUI();});
+        supabaseClient.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;updateAuthUI();});
+
+        displayPlayers();
         }
 
         function updateTeam() {
@@ -1568,7 +1728,7 @@
                     <div>${player.icon}</div>
                     <strong>${player.name}</strong>
                     <p style="color:#31d7a3; margin-top:6px;">
-                        ${player.position}
+                        ${player.role}
                     </p>
                 `;
 
@@ -1588,7 +1748,7 @@
                 displayPlayers(players);
             } else {
                 displayPlayers(
-                    players.filter(player => player.position === position)
+                    players.filter(player => player.role === position)
                 );
             }
         }
@@ -1606,6 +1766,115 @@
                 behavior: "smooth"
             });
         }
+
+
+        const SUPABASE_URL = "https://geahyrxqqurdfbuutgys.supabase.co";
+        const SUPABASE_KEY = "sb_publishable_nphYeG6JDCp0kGPw2CDeag_BLGYNabn";
+        const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+        let currentUser = null;
+        let currentLeague = null;
+        let chatMode = "global";
+        let chatChannel = null;
+
+        function showCPL(){
+            document.getElementById("cplPanel").style.display="block";
+            window.scrollTo({top:0,behavior:"smooth"});
+            loadGlobalLeaderboard();
+            loadMyLeagues();
+            loadChat();
+        }
+        function msg(id,text){document.getElementById(id).textContent=text;}
+        async function ensureProfile(user, username){
+            const name=username || user.user_metadata?.username || user.email?.split("@")[0] || "Player";
+            await supabaseClient.from("profiles").upsert({id:user.id,username:name},{onConflict:"id"});
+        }
+        async function signUp(){
+            const email=document.getElementById("emailInput").value.trim();
+            const password=document.getElementById("passwordInput").value;
+            const username=document.getElementById("usernameInput").value.trim();
+            if(!email||!password||!username){msg("authMessage","Enter an email, password and username.");return;}
+            const {data,error}=await supabaseClient.auth.signUp({email,password,options:{data:{username}}});
+            if(error){
+                if(/rate limit|rate_limit|too many/i.test(error.message)) msg("authMessage","Supabase email limit reached. Wait for the limit to reset, then try again. If you already have an account, use Log In.");
+                else msg("authMessage",error.message);
+                return;
+            }
+            if(data.user) await ensureProfile(data.user,username);
+            msg("authMessage",data.session?"Account created and logged in.":"Account created. Check your email if confirmation is enabled in Supabase.");
+        }
+        async function logIn(){
+            const email=document.getElementById("emailInput").value.trim();
+            const password=document.getElementById("passwordInput").value;
+            const {data,error}=await supabaseClient.auth.signInWithPassword({email,password});
+            if(error){msg("authMessage",error.message);return;}
+            currentUser=data.user; await ensureProfile(currentUser); updateAuthUI(); loadMyLeagues(); loadGlobalLeaderboard(); loadChat();
+            msg("authMessage","Logged in.");
+        }
+        async function logOut(){await supabaseClient.auth.signOut();currentUser=null;currentLeague=null;updateAuthUI();msg("authMessage","Logged out.");}
+        function updateAuthUI(){document.getElementById("authStatus").textContent=currentUser?`Logged in as ${currentUser.email}`:"Not logged in";}
+
+        async function saveTeam(){
+            if(!currentUser){msg("authMessage","Log in before saving your team.");showCPL();return;}
+            const name=prompt("Team name:","My CPL Team"); if(!name)return;
+            const {data:team,error}=await supabaseClient.from("teams").upsert({user_id:currentUser.id,name,points:0},{onConflict:"user_id"}).select().single();
+            if(error){msg("authMessage",error.message);return;}
+            await supabaseClient.from("team_players").delete().eq("team_id",team.id);
+            const rows=selectedPlayers.map(i=>({team_id:team.id,player_key:String(i)}));
+            if(rows.length) await supabaseClient.from("team_players").insert(rows);
+            msg("authMessage","Team saved.");
+        }
+        async function createLeague(){
+            if(!currentUser){msg("leagueMessage","Log in first.");return;}
+            const name=document.getElementById("leagueNameInput").value.trim(); if(!name){msg("leagueMessage","Enter a league name.");return;}
+            const code=Math.random().toString(36).slice(2,8).toUpperCase();
+            const {data,error}=await supabaseClient.from("leagues").insert({name,code,is_public:false,created_by:currentUser.id}).select().single();
+            if(error){msg("leagueMessage",error.message);return;}
+            await supabaseClient.from("league_members").insert({league_id:data.id,user_id:currentUser.id});
+            document.getElementById("leagueCodeInput").value=code; msg("leagueMessage",`League created. Code: ${code}`); loadMyLeagues();
+        }
+        async function joinLeague(){
+            if(!currentUser){msg("leagueMessage","Log in first.");return;}
+            const code=document.getElementById("leagueCodeInput").value.trim().toUpperCase(); if(!code){msg("leagueMessage","Enter a league code.");return;}
+            const {error}=await supabaseClient.rpc("join_league_by_code",{p_code:code});
+            if(error){msg("leagueMessage",error.message);return;}
+            msg("leagueMessage","Joined league."); loadMyLeagues();
+        }
+        async function loadMyLeagues(){
+            const box=document.getElementById("myLeagues"); if(!currentUser){box.innerHTML="";return;}
+            const {data,error}=await supabaseClient.from("league_members").select("league_id,leagues(id,name,code)").eq("user_id",currentUser.id);
+            if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;}
+            box.innerHTML=data.length?data.map(x=>`<button onclick='selectLeague(${JSON.stringify(x.leagues.id)},${JSON.stringify(x.leagues.name)})'>${x.leagues.name} (${x.leagues.code})</button>`).join(""):"<p class='muted'>No leagues yet.</p>";
+        }
+        async function selectLeague(id,name){currentLeague={id,name};document.getElementById("leagueBoardTitle").textContent=`${name} Leaderboard`;await loadLeagueLeaderboard(id);setChatMode("league");loadChat();}
+        async function loadGlobalLeaderboard(){
+            const box=document.getElementById("globalLeaderboard"); const {data,error}=await supabaseClient.rpc("get_global_leaderboard");
+            if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;} renderBoard(box,data||[]);
+        }
+        async function loadLeagueLeaderboard(id){
+            const box=document.getElementById("leagueLeaderboard"); const {data,error}=await supabaseClient.rpc("get_league_leaderboard",{p_league_id:id});
+            if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;} renderBoard(box,data||[]);
+        }
+        function renderBoard(box,data){if(!data.length){box.innerHTML="<p class='muted'>No teams yet.</p>";return;}box.innerHTML=`<table><thead><tr><th>#</th><th>Username</th><th>Team</th><th>Points</th></tr></thead><tbody>${data.map((x,i)=>`<tr><td>${i+1}</td><td>${x.username||"-"}</td><td>${x.team_name||"-"}</td><td>${x.points??0}</td></tr>`).join("")}</tbody></table>`;}
+        function setChatMode(mode){chatMode=mode;document.getElementById("chatModeLabel").textContent=mode==="global"?"Global Chat":currentLeague?`League Chat: ${currentLeague.name}`:"League Chat — select a league first";loadChat();}
+        async function loadChat(){
+            const box=document.getElementById("chatMessages"); if(!currentUser){box.innerHTML="<p class='muted'>Log in to use chat.</p>";return;}
+            if(chatMode==="league"&&!currentLeague){box.innerHTML="<p class='muted'>Select a league first.</p>";return;}
+            let q=supabaseClient.from("messages").select("id,user_id,username,message,created_at,league_id").order("created_at",{ascending:true}).limit(100);
+            q=chatMode==="global"?q.is("league_id",null):q.eq("league_id",currentLeague.id);
+            const {data,error}=await q; if(error){box.innerHTML=`<p class="muted">${error.message}</p>`;return;} renderMessages(data||[]); subscribeChat();
+        }
+        function renderMessages(data){document.getElementById("chatMessages").innerHTML=data.length?data.map(m=>`<div class="chatMsg"><span class="chatUser">${escapeHtml(m.username)}</span><span class="chatTime">${new Date(m.created_at).toLocaleString()}</span><div class="chatText">${escapeHtml(m.message)}</div></div>`).join(""):"<p class='muted'>No messages yet.</p>";const b=document.getElementById("chatMessages");b.scrollTop=b.scrollHeight;}
+        function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#039;'}[c]));}
+        function subscribeChat(){if(chatChannel){supabaseClient.removeChannel(chatChannel);chatChannel=null;}const filter=chatMode==="global"?"league_id=is.null":`league_id=eq.${currentLeague.id}`;chatChannel=supabaseClient.channel("cpl-chat").on("postgres_changes",{event:"INSERT",schema:"public",table:"messages",filter},()=>loadChat()).subscribe();}
+        async function sendMessage(){
+            if(!currentUser){msg("chatMessage","Log in first.");return;}
+            if(chatMode==="league"&&!currentLeague){msg("chatMessage","Select a league first.");return;}
+            const input=document.getElementById("chatInput"); const message=input.value.trim(); if(!message)return;
+            const {error}=await supabaseClient.from("messages").insert({user_id:currentUser.id,league_id:chatMode==="global"?null:currentLeague.id,message});
+            if(error){msg("chatMessage",error.message);return;} input.value=""; msg("chatMessage",""); loadChat();
+        }
+        supabaseClient.auth.getSession().then(async ({data})=>{currentUser=data.session?.user||null;if(currentUser)await ensureProfile(currentUser);updateAuthUI();});
+        supabaseClient.auth.onAuthStateChange((_event,session)=>{currentUser=session?.user||null;updateAuthUI();});
 
         displayPlayers();
 
